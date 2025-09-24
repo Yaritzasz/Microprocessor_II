@@ -1,1 +1,1 @@
-#Microprocessor II
+# Lab 1: Traffic Light Controller

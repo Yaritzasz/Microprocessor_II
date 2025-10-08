@@ -1,0 +1,95 @@
+#include <Keypad.h>
+
+// ===================== RGB LED Pins =====================
+#define BLUE  23
+#define GREEN 27
+#define RED   25
+
+// ===================== Buzzer (ACTIVE buzzer) =====================
+#define BUZZER 12
+
+// ===================== Keypad Setup =====================
+const byte ROWS = 4;
+const byte COLS = 4;
+char hexaKeys[ROWS][COLS] = {
+  {'1','2','3','A'},
+  {'4','5','6','B'},
+  {'7','8','9','C'},
+  {'*','0','#','D'}
+};
+byte rowPins[ROWS] = {9, 8, 7, 6};
+byte colPins[COLS] = {5, 4, 3, 2};
+Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
+
+// ===================== Durations =====================
+const unsigned long RED_DURATION    = 24000;
+const unsigned long GREEN_DURATION  = 20000;
+const unsigned long YELLOW_DURATION = 3000;
+
+// ===================== State =====================
+enum LedMode { OFF_MODE, RED_MODE, GREEN_MODE, YELLOW_MODE };
+LedMode currentMode = OFF_MODE;
+
+unsigned long modeStart = 0;
+unsigned long modeLength = 0;
+
+// rolling 4-key buffer
+char buf[4] = {'\0','\0','\0','\0'};
+int  bufLen = 0;
+
+// ===================== Startup-blink state =====================
+bool waitingForFirstKey = true;
+unsigned long lastBlink = 0;
+bool blinkOn = false;
+
+// ===================== Traffic operation state =====================
+bool trafficRun = false;
+unsigned long lastHalfBlink = 0;
+bool halfBlinkOn = false;
+
+// ================================================================
+// Assembly version of setRGB()
+void setRGB(bool r, bool g, bool b) {
+  // Each LED pin corresponds to a PORT and bit on the ATmega2560:
+  // RED = 25 → PB3
+  // GREEN = 27 → PH4
+  // BLUE = 23 → PA1
+
+  // --- RED LED ---
+  if (r) {
+    asm volatile("sbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTB)), "I" (3)); // set bit 3 on PORTB
+  } else {
+    asm volatile("cbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTB)), "I" (3)); // clear bit 3
+  }
+
+  // --- GREEN LED ---
+  if (g) {
+    asm volatile("sbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTH)), "I" (4));
+  } else {
+    asm volatile("cbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTH)), "I" (4));
+  }
+
+  // --- BLUE LED ---
+  if (b) {
+    asm volatile("sbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTA)), "I" (1));
+  } else {
+    asm volatile("cbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTA)), "I" (1));
+  }
+}
+
+// ================================================================
+
+void enterMode(LedMode m, unsigned long duration) {
+  currentMode = m;
+  modeStart   = millis();
+  modeLength  = duration;
+
+  switch (m) {
+    case RED_MODE:    setRGB(true,  false, false); break;
+    case GREEN_MODE:  setRGB(false, true,  false); break;
+    case YELLOW_MODE: setRGB(false, false, true ); break;
+    default:          setRGB(false, false, false); break;
+  }
+}
+
+// ===================== rest of your code stays exactly the same =====================

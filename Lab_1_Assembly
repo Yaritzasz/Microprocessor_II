@@ -1,30 +1,39 @@
 #include <Keypad.h>
 
-// ===================== RGB LED Pins =====================
+#if defined(ESP32)
+// Direct register access on ESP32
+#include "soc/gpio_struct.h"
+#include "soc/gpio_reg.h"
+#endif
+
+// ===================== RGB LED Pins (common cathode assumed) =====================
 #define BLUE  23
 #define GREEN 27
 #define RED   25
 
 // ===================== Buzzer (ACTIVE buzzer) =====================
-#define BUZZER 12
+#define BUZZER 12   // <-- Active buzzer pin (change if you wired differently)
 
 // ===================== Keypad Setup =====================
 const byte ROWS = 4;
 const byte COLS = 4;
+
 char hexaKeys[ROWS][COLS] = {
   {'1','2','3','A'},
   {'4','5','6','B'},
   {'7','8','9','C'},
   {'*','0','#','D'}
 };
+
 byte rowPins[ROWS] = {9, 8, 7, 6};
 byte colPins[COLS] = {5, 4, 3, 2};
+
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
-// ===================== Durations =====================
-const unsigned long RED_DURATION    = 24000;
-const unsigned long GREEN_DURATION  = 20000;
-const unsigned long YELLOW_DURATION = 3000;
+// ===================== Durations (ms) =====================
+const unsigned long RED_DURATION    = 24000; // A-2-4-#
+const unsigned long GREEN_DURATION  = 20000; // B-2-0-#
+const unsigned long YELLOW_DURATION =  3000; // 3 seconds
 
 // ===================== State =====================
 enum LedMode { OFF_MODE, RED_MODE, GREEN_MODE, YELLOW_MODE };
@@ -38,46 +47,63 @@ char buf[4] = {'\0','\0','\0','\0'};
 int  bufLen = 0;
 
 // ===================== Startup-blink state =====================
-bool waitingForFirstKey = true;
+bool waitingForFirstKey = true;       // blink until any key is pressed
 unsigned long lastBlink = 0;
 bool blinkOn = false;
 
-// ===================== Traffic operation state =====================
-bool trafficRun = false;
-unsigned long lastHalfBlink = 0;
+// ===================== NEW: Traffic operation state =====================
+bool trafficRun = false;              // true when running the full sequence via '*'
+unsigned long lastHalfBlink = 0;      // for 0.5s red/green blink during last 3s
 bool halfBlinkOn = false;
-
 // ================================================================
-// Assembly version of setRGB()
+
+// ===== LED control converted to ESP32 direct GPIO with tiny inline asm barriers =====
 void setRGB(bool r, bool g, bool b) {
-  // Each LED pin corresponds to a PORT and bit on the ATmega2560:
-  // RED = 25 → PB3
-  // GREEN = 27 → PH4
-  // BLUE = 23 → PA1
+#if defined(ESP32)
+  // Build bitmasks (Arduino pin numbers map to GPIO on ESP32 core)
+  uint32_t maskR = (1UL << RED);
+  uint32_t maskG = (1UL << GREEN);
+  uint32_t maskB = (1UL << BLUE);
 
-  // --- RED LED ---
+  // --- RED ---
   if (r) {
-    asm volatile("sbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTB)), "I" (3)); // set bit 3 on PORTB
+    asm volatile("memw");
+    GPIO.out_w1ts = maskR;   // set RED high
+    asm volatile("memw");
   } else {
-    asm volatile("cbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTB)), "I" (3)); // clear bit 3
+    asm volatile("memw");
+    GPIO.out_w1tc = maskR;   // clear RED low
+    asm volatile("memw");
   }
 
-  // --- GREEN LED ---
+  // --- GREEN ---
   if (g) {
-    asm volatile("sbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTH)), "I" (4));
+    asm volatile("memw");
+    GPIO.out_w1ts = maskG;
+    asm volatile("memw");
   } else {
-    asm volatile("cbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTH)), "I" (4));
+    asm volatile("memw");
+    GPIO.out_w1tc = maskG;
+    asm volatile("memw");
   }
 
-  // --- BLUE LED ---
+  // --- BLUE ---
   if (b) {
-    asm volatile("sbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTA)), "I" (1));
+    asm volatile("memw");
+    GPIO.out_w1ts = maskB;
+    asm volatile("memw");
   } else {
-    asm volatile("cbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTA)), "I" (1));
+    asm volatile("memw");
+    GPIO.out_w1tc = maskB;
+    asm volatile("memw");
   }
+#else
+  // Fallback for non-ESP32 targets (keeps the sketch portable)
+  digitalWrite(RED,   r ? HIGH : LOW);
+  digitalWrite(GREEN, g ? HIGH : LOW);
+  digitalWrite(BLUE,  b ? HIGH : LOW);
+#endif
 }
-
-// ================================================================
 
 void enterMode(LedMode m, unsigned long duration) {
   currentMode = m;
@@ -85,11 +111,173 @@ void enterMode(LedMode m, unsigned long duration) {
   modeLength  = duration;
 
   switch (m) {
-    case RED_MODE:    setRGB(true,  false, false); break;
-    case GREEN_MODE:  setRGB(false, true,  false); break;
-    case YELLOW_MODE: setRGB(false, false, true ); break;
-    default:          setRGB(false, false, false); break;
+    case RED_MODE:    setRGB(true,  false, false); break;  // Red ON
+    case GREEN_MODE:  setRGB(false, true,  false); break;  // Green ON
+    case YELLOW_MODE: setRGB(false, false, true ); break;  // Yellow ON (your BLUE pin)
+    default:          setRGB(false, false, false); break;  // All OFF
   }
 }
 
-// ===================== rest of your code stays exactly the same =====================
+void startRed24s()    { enterMode(RED_MODE,   RED_DURATION); }
+void startGreen20s()  { enterMode(GREEN_MODE, GREEN_DURATION); }
+void startYellow()    { enterMode(YELLOW_MODE, YELLOW_DURATION); }
+
+void clearBuffer() {
+  bufLen = 0;
+  buf[0] = buf[1] = buf[2] = buf[3] = '\0';
+}
+
+void pushKey(char k) {
+  if (bufLen < 4) {
+    buf[bufLen++] = k;
+  } else {
+    // shift left and append new key
+    buf[0] = buf[1];
+    buf[1] = buf[2];
+    buf[2] = buf[3];
+    buf[3] = k;
+  }
+}
+
+void checkSequences() {
+  // Need 4 keys for the Red/Green sequences
+  if (bufLen >= 4) {
+    // --- Red for 24s on "A-2-4-#" ---
+    if (buf[0]=='A' && buf[1]=='2' && buf[2]=='4' && buf[3]=='#') {
+      startRed24s();
+      clearBuffer();
+      return;
+    }
+
+    // --- Green for 20s on "B-2-0-#" ---
+    if (buf[0]=='B' && buf[1]=='2' && buf[2]=='0' && buf[3]=='#') {
+      startGreen20s();
+      clearBuffer();
+      return;
+    }
+  }
+
+  // --- '*' starts the full traffic operation ---
+  if (bufLen >= 1 && buf[bufLen - 1] == '*') {
+    clearBuffer();
+    trafficRun = true;                // enable chained sequence
+    // if still in startup blink, stop it
+    if (waitingForFirstKey) {
+      waitingForFirstKey = false;
+      blinkOn = false;
+    }
+    setRGB(false, false, false);
+    halfBlinkOn = false;              // reset blink state
+    lastHalfBlink = millis();
+    startRed24s();                    // begin with RED
+    return;
+  }
+}
+
+void setup() {
+  pinMode(RED,   OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(BLUE,  OUTPUT);
+  pinMode(BUZZER, OUTPUT);              // <-- added
+  digitalWrite(BUZZER, LOW);            // <-- ensure buzzer is off
+
+#if defined(ESP32)
+  asm volatile("memw");                 // optional micro-optimization before first write
+#endif
+
+  setRGB(false, false, false); // all off at start
+  Serial.begin(9600);
+}
+
+void loop() {
+  // ===================== Indefinite red blink until any key press =====================
+  if (waitingForFirstKey) {
+    if (millis() - lastBlink >= 1000) {
+      lastBlink = millis();
+      blinkOn = !blinkOn;
+      setRGB(blinkOn, false, false); // blink RED only
+    }
+  }
+  // ====================================================================================
+
+  // --- Read keypad ---
+  char k = customKeypad.getKey();
+  if (k) {
+    Serial.println(k);
+    pushKey(k);
+    checkSequences();
+
+    // stop startup blinking on first keypress
+    if (waitingForFirstKey) {
+      waitingForFirstKey = false;
+      blinkOn = false;
+      setRGB(false, false, false); // turn off after exiting blink state
+    }
+  }
+
+  // --- Handle current LED mode timing ---
+  if (currentMode != OFF_MODE) {
+    unsigned long now = millis();
+    unsigned long elapsed = now - modeStart;
+
+    // During the last 3 seconds of RED (only in trafficRun), blink 0.5s on/off
+    if (trafficRun && currentMode == RED_MODE) {
+      if (elapsed >= (modeLength > 3000 ? modeLength - 3000 : 0) && elapsed < modeLength) {
+        if (now - lastHalfBlink >= 500) {
+          lastHalfBlink = now;
+          halfBlinkOn = !halfBlinkOn;
+          setRGB(halfBlinkOn, false, false); // toggle RED
+        }
+      }
+    }
+
+    // During the last 3 seconds of GREEN (only in trafficRun), blink 0.5s on/off
+    if (trafficRun && currentMode == GREEN_MODE) {
+      if (elapsed >= (modeLength > 3000 ? modeLength - 3000 : 0) && elapsed < modeLength) {
+        if (now - lastHalfBlink >= 500) {
+          lastHalfBlink = now;
+          halfBlinkOn = !halfBlinkOn;
+          setRGB(false, halfBlinkOn, false); // toggle GREEN
+        }
+      }
+    }
+
+    // --- NEW: Beep the active buzzer for 3 seconds BEFORE any light changes ---
+    if (elapsed >= (modeLength > 3000 ? modeLength - 3000 : 0) && elapsed < modeLength) {
+      digitalWrite(BUZZER, HIGH);   // active buzzer: constant tone
+    } else {
+      digitalWrite(BUZZER, LOW);
+    }
+
+    // When a mode ends...
+    if (elapsed >= modeLength) {
+      if (trafficRun) {
+        // Traffic sequence: RED -> GREEN -> YELLOW -> RED (loop)
+        if (currentMode == RED_MODE) {
+          startGreen20s();
+        } else if (currentMode == GREEN_MODE) {
+          startYellow();
+        } else if (currentMode == YELLOW_MODE) {
+          startRed24s();
+        } else {
+          // safety fallback
+          currentMode = OFF_MODE;
+          setRGB(false, false, false);
+        }
+      } else {
+        // Original behavior (Yellow ONLY after Green; and YELLOW then RED)
+        if (currentMode == GREEN_MODE) {
+          startYellow();
+        } else if (currentMode == YELLOW_MODE) {
+          startRed24s();
+        } else {
+          currentMode = OFF_MODE;
+          setRGB(false, false, false);
+        }
+      }
+    }
+  } else {
+    // No active mode -> make sure buzzer is off
+    digitalWrite(BUZZER, LOW);
+  }
+}

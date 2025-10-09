@@ -34,7 +34,7 @@ volatile bool startupBlinkOn = false;       // toggled at 1 Hz by ISR
 // User-set durations (seconds). MUST be set via keypad (no hard-coded defaults)
 volatile uint16_t redSec    = 0;
 volatile uint16_t greenSec  = 0;
-volatile uint16_t yellowSec = 0;
+volatile uint16_t yellowSec = 3;
 
 /* ===================== Input for duration setting ===================== */
 enum InputTarget : uint8_t { NONE, SET_RED, SET_GREEN, SET_YELLOW };

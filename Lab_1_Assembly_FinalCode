@@ -235,46 +235,6 @@ void loop(){
     // reset tick flag and decrement timer
     tick_flag = false;
     countdown_timer--;
-
-    // state machine
-    switch (state) {
-      case 1:
-        state = 2;
-        countdown_timer = 3;
-        Serial.print("main redlight on, cross greenlight on");
-        break;
-
-      case 2:
-        state = 3;
-        countdown_timer = 3;
-        Serial.print("main redlight on, cross greenlight blinking");
-        break;
-
-      case 3:
-        state = 4;
-        countdown_timer = main_time_greenlight - 3;
-        Serial.print("main redlight blinking, cross yellowlight on ");
-        break;
-
-      case 4:
-        state = 5;
-        countdown_timer = 3;
-        Serial.print("main greenlight on, cross redlight is on");
-        break;
-
-      case 5:
-        state = 6;
-        countdown_timer = 3;
-        Serial.print("main greenlight blinking, cross redlight on");
-        break;
-
-      case 6:
-        state = 1;
-        countdown_timer = main_time_redlight - 6;
-        Serial.print("main yellowlight on, cross redlight blinking");
-        break;
-
-    }
   }
 
   /* Update outputs (led, buzzer and display) */

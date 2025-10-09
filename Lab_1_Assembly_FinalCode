@@ -55,9 +55,6 @@ void update_leds(int s) {
   digitalWrite(red_main, LOW);
   digitalWrite(yellow_main, LOW);
   digitalWrite(green_main, LOW);
-  digitalWrite(red_cross, LOW);
-  digitalWrite(yellow_cross, LOW);
-  digitalWrite(green_cross, LOW);
 
   // For blinking, we’ll use millis() to toggle every 500ms
   static unsigned long lastBlink = 0;
@@ -101,11 +98,7 @@ void update_leds(int s) {
   }
 }
 
-void update_display(unsigned char seconds_left) {
-  digitalWrite(latch_pin,LOW);
-  shiftOut(data_pin,clock_pin,MSBFIRST,table[seconds_left]);
-  digitalWrite(latch_pin,HIGH);
-}
+
 
 int test_func_leds(){ 
   /*

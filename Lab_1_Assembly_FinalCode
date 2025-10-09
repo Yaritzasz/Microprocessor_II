@@ -77,23 +77,19 @@ void update_leds(int s) {
       break;
 
     case 3: // Main RED blinking, Cross YELLOW steady
-      digitalWrite(yellow_cross, HIGH);
       if (blinkOn) digitalWrite(red_main, HIGH);
       break;
 
     case 4: // Main GREEN steady, Cross RED steady
       digitalWrite(green_main, HIGH);
-      digitalWrite(red_cross, HIGH);
       break;
 
     case 5: // Main GREEN blinking, Cross RED steady
-      digitalWrite(red_cross, HIGH);
       if (blinkOn) digitalWrite(green_main, HIGH);
       break;
 
     case 6: // Main YELLOW steady, Cross RED blinking
       digitalWrite(yellow_main, HIGH);
-      if (blinkOn) digitalWrite(red_cross, HIGH);
       break;
   }
 }
@@ -126,7 +122,7 @@ int test_func_leds(){
   while(true){
     /* STATE 1 RUNNING STATE, main redlight on, cross greenlight on */
     digitalWrite(red_main, HIGH);     //turn on main redlight
-    digitalWrite(green_cross, HIGH);  //turn on cross greenlight
+    //turn on cross greenlight
     start_time=millis();              //get start time offset
     //loop until 6 seconds left in main redlight time
     while((main_time_redlight-((current_time-start_time))/1000)>6){ 
@@ -135,25 +131,25 @@ int test_func_leds(){
       
     /* STATE 2 RUNNING STATE, main redlight on, cross greenlight blinking */
     for(int i=0;i<3;i++){             //blink the cross green light for 3 secs then turn it off. Main redlight stays ON. one loop is 1 sec 
-      digitalWrite(green_cross,HIGH); //turn on light
-      delay(500);                     //wait 500ms (0.5s)
-      digitalWrite(green_cross,LOW);  //turn off light
-      delay(500);                     //wait 500ms
+       //turn on light
+                          //wait 500ms (0.5s)
+       //turn off light
+                          //wait 500ms
     }
       
     /* STATE 3 RUNNING STATE, main redlight blinking, cross yellowlight on */
-    digitalWrite(yellow_cross,HIGH);    //turn on cross yellow light
+       //turn on cross yellow light
     for(int i=0;i<3;i++){               //blink main redlight for 3 secs then turn off
       digitalWrite(red_main,HIGH);      //turn on light
       delay(500);                       //wait 500ms (0.5s)
       digitalWrite(red_main,LOW);       //turn off light
       delay(500);                       //wait 500ms
     }
-    digitalWrite(yellow_cross,LOW);     //turn off cross yellowlight
+        //turn off cross yellowlight
         
     /* STATE 4 RUNNING STATE, main greenlight on, cross redlight is on */
     digitalWrite(green_main, HIGH);   //turn on main greenlight
-    digitalWrite(red_cross, HIGH);    //turn on cross redlight
+        //turn on cross redlight
     start_time=millis();              //get start time offset
     current_time=millis();
     //loop until 3 seconds left in main greenlight time
@@ -172,10 +168,10 @@ int test_func_leds(){
     /* STATE 6 RUNNING STATE, main yellowlight on, cross redlight blinking */
     digitalWrite(yellow_main,HIGH);
     for(int i=0;i<3;i++){             //blink main redlight for 3 secs then turn off
-      digitalWrite(red_cross,HIGH);   //turn on light
+        //turn on light
       delay(500);                     //wait 500ms (0.5s)
-      digitalWrite(red_cross,LOW);    //turn off light
-      delay(500);                     //wait 500ms
+          //turn off light
+                           //wait 500ms
     }
     digitalWrite(yellow_main,LOW);    //turn off cross yellowlight
 
@@ -191,13 +187,6 @@ void setup() {
   pinMode(green_main,OUTPUT);
   pinMode(yellow_main,OUTPUT);
   pinMode(red_main,OUTPUT);
-  pinMode(green_cross,OUTPUT);
-  pinMode(yellow_cross,OUTPUT);
-  pinMode(red_cross,OUTPUT);
-  pinMode(buzzer_pin,OUTPUT);
-  pinMode(latch_pin,OUTPUT);
-  pinMode(clock_pin,OUTPUT);
-  pinMode(data_pin,OUTPUT);
 
   /*
     Setup timer - CTC mode

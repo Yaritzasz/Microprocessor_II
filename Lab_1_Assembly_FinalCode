@@ -9,10 +9,7 @@
 #define  green_main 27     
 #define  yellow_main 25    
 #define  red_main 23        
-#define  green_cross 53    
-#define  yellow_cross 51
-#define  red_cross 49 
-#define  buzzer_pin 13
+#define  buzzer_pin 12
 
 
 /* Init Vars */

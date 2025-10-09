@@ -6,16 +6,14 @@
 #include <avr/interrupt.h>
 
 /* Pins assignments (using #define to get more RAM space) */
-#define  green_main 52     
-#define  yellow_main 50    
-#define  red_main 48        
+#define  green_main 27     
+#define  yellow_main 25    
+#define  red_main 23        
 #define  green_cross 53    
 #define  yellow_cross 51
 #define  red_cross 49 
 #define  buzzer_pin 13
-#define  clock_pin 4
-#define  data_pin 3
-#define  latch_pin 2
+
 
 /* Init Vars */
  // timing and state transistion stuff

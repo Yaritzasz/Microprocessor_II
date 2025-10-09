@@ -177,7 +177,6 @@ void loop() {
 
     if (k == 'A') { inputTarget = SET_RED;    resetDigits(); }
     else if (k == 'B') { inputTarget = SET_GREEN;  resetDigits(); }
-    else if (k == 'C') { inputTarget = SET_YELLOW; resetDigits(); }
     else if (k >= '0' && k <= '9' && inputTarget != NONE) { pushDigit(k); }
     else if (k == '#' && inputTarget != NONE) { commitDigits(); }
     else if (k == '*') {

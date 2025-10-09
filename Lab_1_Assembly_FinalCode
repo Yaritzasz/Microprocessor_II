@@ -68,7 +68,6 @@ void update_leds(int s) {
   switch (s) {
     case 1: // Main RED on, Cross GREEN on (steady)
       digitalWrite(red_main, HIGH);
-      digitalWrite(green_cross, HIGH);
       break;
 
     case 2: // Main RED steady, Cross GREEN blinking

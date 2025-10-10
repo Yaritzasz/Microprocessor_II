@@ -1,14 +1,14 @@
 #include <Keypad.h>
 
-/* ===================== Pin Assignments (Arduino Mega 2560) ===================== */
-#define BLUE   23
+/* ===================== Pins (Arduino Mega 2560) ===================== */
+#define YELLOW   23
 #define GREEN  27
 #define RED    25
 #define BUZZER 12   // Active buzzer
 
-/* ===================== Keypad Setup ===================== */
+/* ===================== Keypad ===================== */
 const byte ROWS = 4, COLS = 4;
-char keys[ROWS][COLS] = {
+char hexaKeys[ROWS][COLS] = {
   {'1','2','3','A'},
   {'4','5','6','B'},
   {'7','8','9','C'},
@@ -16,71 +16,99 @@ char keys[ROWS][COLS] = {
 };
 byte rowPins[ROWS] = {9, 8, 7, 6};
 byte colPins[COLS] = {5, 4, 3, 2};
-Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+Keypad keypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
-/* ===================== State Variables ===================== */
-enum Mode { STARTUP, RED_MODE, GREEN_MODE, YELLOW_MODE };
-volatile Mode currentMode = STARTUP;
+/* ===================== Traffic State ===================== */
+enum LedMode : uint8_t { OFF_MODE, RED_MODE, GREEN_MODE, YELLOW_MODE };
+volatile LedMode currentMode = OFF_MODE;
 
-volatile uint16_t secondsRemaining = 0;
-volatile bool halfSecondToggle = false;   // toggles every 0.5s for flashing
-volatile bool buzzerOn = false;
-volatile bool halfSecondPhase = false;    // helper for 0.5 Hz blink timing
+volatile bool trafficRun = false;           // true when running * cycle
+volatile uint16_t secondsRemaining = 0;     // counts down every 1s (ISR)
+volatile bool phaseBlinkOn = false;         // 1 Hz in last 3s (phase)
+volatile bool buzzerOn = false;             // ON in last 3s
 
-// User-set durations (seconds)
-volatile uint16_t redSec = 0;
-volatile uint16_t greenSec = 0;
-const uint16_t yellowSec = 3;
+// Startup blink (indefinite until first key)
+volatile bool waitingForFirstKey = true;
+volatile bool startupBlinkOn = false;       // toggled at 1 Hz by ISR
 
-// Input handling
-enum InputTarget { NONE, SET_RED, SET_GREEN };
+// User-set durations (seconds). MUST be set via keypad (no hard-coded defaults)
+volatile uint16_t redSec    = 0;
+volatile uint16_t greenSec  = 0;
+volatile uint16_t yellowSec = 4;
+
+/* ===================== Input for duration setting ===================== */
+enum InputTarget : uint8_t { NONE, SET_RED, SET_GREEN, SET_YELLOW };
 InputTarget inputTarget = NONE;
-char digitsBuf[5];
+char digitsBuf[5];     // up to 4 digits (0.9999) + '\0'
 uint8_t digitsLen = 0;
 
-/* ===================== Helper Functions ===================== */
+/* ===================== Helpers ===================== */
 static inline void setRGB(bool r, bool g, bool b) {
   digitalWrite(RED,   r ? HIGH : LOW);
   digitalWrite(GREEN, g ? HIGH : LOW);
-  digitalWrite(BLUE,  b ? HIGH : LOW);
+  digitalWrite(YELLOW,  b ? HIGH : LOW);
 }
 
-static inline void startPhase(Mode m, uint16_t sec) {
+// For "yellow", light RED+GREEN together
+static inline void showModeSolid(LedMode m) {
+  switch (m) {
+    case RED_MODE:    setRGB(true,  false, false); break;
+    case GREEN_MODE:  setRGB(false, true,  false); break;
+    case YELLOW_MODE: setRGB(false,  false,  true); break; 
+    default:          setRGB(false, false, false); break;
+  }
+}
+
+static inline void startMode(LedMode m, uint16_t seconds) {
   currentMode = m;
-  secondsRemaining = sec;
+  secondsRemaining = seconds;
+  phaseBlinkOn = false;
   buzzerOn = false;
 }
 
-/* ===================== Timer1 ISR =====================
-   Fires every 0.5s for fine timing (so we can do 0.5s flashing)
-   ====================================================== */
+/* ===================== Timer1 ISR @ 1 Hz ===================== */
 ISR(TIMER1_COMPA_vect) {
-  halfSecondToggle = !halfSecondToggle;   // toggles every 0.5s
-  static bool oneSecond = false;
-  oneSecond = !oneSecond;  // toggles each interrupt → 1s every 2 calls
-
-  if (currentMode == STARTUP) return;
-
-  // Decrement once per second
-  if (oneSecond && secondsRemaining > 0) {
-    secondsRemaining--;
-
-    // Turn buzzer ON during last 3 seconds
-    buzzerOn = (secondsRemaining > 0 && secondsRemaining <= 3);
+  // Handle startup blink regardless of currentMode
+  if (waitingForFirstKey) {
+    startupBlinkOn = !startupBlinkOn;  // toggle red each second
+    buzzerOn = false;
+    return;
   }
 
-  // When time expires, advance to next phase
-  if (oneSecond && secondsRemaining == 0) {
-    switch (currentMode) {
-      case RED_MODE:    startPhase(GREEN_MODE, greenSec);  break;
-      case GREEN_MODE:  startPhase(YELLOW_MODE, yellowSec); break;
-      case YELLOW_MODE: startPhase(RED_MODE, redSec); break;
-      default: break;
+  if (currentMode == OFF_MODE) {
+    buzzerOn = false;
+    return;
+  }
+
+  if (secondsRemaining > 0) {
+    secondsRemaining--;
+
+    // Last 3 seconds of current phase
+    if (secondsRemaining > 0 && secondsRemaining <= 3) {
+      buzzerOn = true;
+      phaseBlinkOn = !phaseBlinkOn;   // toggle at 1 Hz
+    } else {
+      buzzerOn = false;
+      phaseBlinkOn = false;
+    }
+  }
+
+  // Phase end: chain or stop
+  if (secondsRemaining == 0) {
+    if (trafficRun) {
+      if      (currentMode == RED_MODE)    startMode(GREEN_MODE,  greenSec);
+      else if (currentMode == GREEN_MODE)  startMode(YELLOW_MODE, yellowSec);
+      else if (currentMode == YELLOW_MODE) startMode(RED_MODE,    redSec);
+      else                                 currentMode = OFF_MODE;
+    } else {
+      currentMode = OFF_MODE;
+      buzzerOn = false;
+      phaseBlinkOn = false;
     }
   }
 }
 
-/* ===================== Input Helpers ===================== */
+/* ===================== Keypad Input Logic ===================== */
 void resetDigits() {
   digitsLen = 0;
   digitsBuf[0] = '\0';
@@ -96,11 +124,15 @@ void pushDigit(char k) {
 void commitDigits() {
   if (digitsLen == 0) { inputTarget = NONE; return; }
   uint16_t val = (uint16_t)atoi(digitsBuf);
-  if (val == 0) val = 1;
+  if (val == 0) val = 1; // avoid zero-length phases; smallest allowed is 1s
 
   noInterrupts();
-  if (inputTarget == SET_RED) redSec = val;
-  else if (inputTarget == SET_GREEN) greenSec = val;
+  switch (inputTarget) {
+    case SET_RED:    redSec    = val; break;
+    case SET_GREEN:  greenSec  = val; break;
+    case SET_YELLOW: yellowSec = val; break;
+    default: break;
+  }
   interrupts();
 
   inputTarget = NONE;
@@ -111,87 +143,116 @@ void commitDigits() {
 void setup() {
   pinMode(RED, OUTPUT);
   pinMode(GREEN, OUTPUT);
-  pinMode(BLUE, OUTPUT);
+  pinMode(YELLOW, OUTPUT);
   pinMode(BUZZER, OUTPUT);
-  setRGB(false, false, false);
   digitalWrite(BUZZER, LOW);
+  setRGB(false, false, false);
 
-  // Timer1 setup @ 0.5 Hz interrupt (every 0.5s)
-  cli();
+  // ---- Timer1 @ 1 Hz (CTC) ----
+  cli();                // stop interrupts
   TCCR1A = 0;
   TCCR1B = 0;
   TCNT1  = 0;
-  // (16 MHz / 1024) = 15625 counts/sec → 7812 for 0.5s
-  OCR1A = 7812;
-  TCCR1B |= (1 << WGM12);                    // CTC mode
-  TCCR1B |= (1 << CS12) | (1 << CS10);       // prescaler 1024
-  TIMSK1 |= (1 << OCIE1A);                   // enable interrupt
-  sei();
+  // (16 MHz) / (1024 prescaler) -> 15624 for 1 Hz (CTC)
+  OCR1A = 15624;
+  TCCR1B |= (1 << WGM12);                     // CTC mode
+  TCCR1B |= (1 << CS12) | (1 << CS10);        // prescaler 1024
+  TIMSK1 |= (1 << OCIE1A);                    // enable compare interrupt
+  sei();                // allow interrupts
 }
 
 /* ===================== Main Loop ===================== */
 void loop() {
-  // --- Keypad input ---
+  // --- Read keypad ---
   char k = keypad.getKey();
   if (k) {
-    if (k == 'A') { inputTarget = SET_RED; resetDigits(); }
-    else if (k == 'B') { inputTarget = SET_GREEN; resetDigits(); }
-    else if (k >= '0' && k <= '9' && inputTarget != NONE) pushDigit(k);
-    else if (k == '#' && inputTarget != NONE) commitDigits();
+    // stop startup blink on first keypress
+    noInterrupts();
+    if (waitingForFirstKey) {
+      waitingForFirstKey = false;
+      startupBlinkOn = false;
+      setRGB(false, false, false);
+    }
+    interrupts();
+
+    if (k == 'A') { inputTarget = SET_RED;    resetDigits(); }
+    else if (k == 'B') { inputTarget = SET_GREEN;  resetDigits(); }
+    else if (k >= '0' && k <= '9' && inputTarget != NONE) { pushDigit(k); }
+    else if (k == '#' && inputTarget != NONE) { commitDigits(); }
     else if (k == '*') {
-      // Start only if both durations set
+      // start traffic cycle from RED using current durations
+      // Only start if ALL three durations are set (>0)
+      bool canStart;
       noInterrupts();
-      if (redSec > 0 && greenSec > 0)
-        startPhase(RED_MODE, redSec);
+      canStart = (redSec > 0 && greenSec > 0);
+      if (canStart) {
+        trafficRun = true;
+        startMode(RED_MODE, redSec);
+      }
+      interrupts();
+      // If not set, do nothing (user must input durations first)
+    }
+    else if (k == 'D') {
+      // stop everything
+      noInterrupts();
+      trafficRun = false;
+      currentMode = OFF_MODE;
+      buzzerOn = false;
+      phaseBlinkOn = false;
       interrupts();
     }
   }
 
-  // --- LED + Buzzer control ---
-  bool buzzerSnap, toggleSnap;
-  Mode modeSnap;
-  uint16_t secSnap;
+  // --- Drive LEDs and buzzer based on current state ---
 
+  // If still waiting for the first key, blink RED at 1 Hz
+  bool waitingSnap, startupBlinkSnap;
   noInterrupts();
-  buzzerSnap = buzzerOn;
-  toggleSnap = halfSecondToggle;
-  modeSnap   = currentMode;
-  secSnap    = secondsRemaining;
+  waitingSnap = waitingForFirstKey;
+  startupBlinkSnap = startupBlinkOn;
   interrupts();
 
-  // Startup blinking (Red 1s on/off until * pressed)
-  if (modeSnap == STARTUP) {
-    if (toggleSnap) setRGB(true, false, false);
-    else            setRGB(false, false, false);
+  if (waitingSnap) {
+    if (startupBlinkSnap) setRGB(true, false, false);
+    else                  setRGB(false, false, false);
     digitalWrite(BUZZER, LOW);
-    return;
+    return;  // don't do anything else until first keypress
   }
 
-  // Buzzer: ON during last 3 seconds, continuous
+  // Otherwise: normal phase behavior
+  LedMode modeSnapshot;
+  bool phaseBlinkSnap, buzzerSnap;
+  uint16_t secsSnap;
+
+  noInterrupts();
+  modeSnapshot   = currentMode;
+  phaseBlinkSnap = phaseBlinkOn;
+  buzzerSnap     = buzzerOn;
+  secsSnap       = secondsRemaining;
+  interrupts();
+
+  // Buzzer: ON in the last 3 seconds, else OFF
   digitalWrite(BUZZER, buzzerSnap ? HIGH : LOW);
 
-  // LED control for each phase
-  switch (modeSnap) {
-    case RED_MODE:
-      if (secSnap <= 3 && secSnap > 0)
-        setRGB(toggleSnap, false, false); // flash 0.5s
-      else
-        setRGB(true, false, false);
-      break;
+  // ---- modified blinking logic ----
+  static unsigned long lastHalfBlink = 0;
+  static bool halfBlinkState = false;
 
-    case GREEN_MODE:
-      if (secSnap <= 3 && secSnap > 0)
-        setRGB(false, toggleSnap, false); // flash 0.5s
-      else
-        setRGB(false, true, false);
-      break;
-
-    case YELLOW_MODE:
-      setRGB(true, true, false); // steady yellow (R+G)
-      break;
-
-    default:
-      setRGB(false, false, false);
-      break;
+  if (modeSnapshot == OFF_MODE) {
+    setRGB(false, false, false);
+  } else {
+    if (secsSnap > 0 && secsSnap <= 3) {
+      // Blink every 0.5 s without changing ISR frequency
+      if (millis() - lastHalfBlink >= 500) {
+        lastHalfBlink = millis();
+        halfBlinkState = !halfBlinkState;
+      }
+      if (halfBlinkState) showModeSolid(modeSnapshot);
+      else                setRGB(false, false, false);
+    } else {
+      // steady
+      showModeSolid(modeSnapshot);
+      halfBlinkState = false;  // reset
+    }
   }
 }

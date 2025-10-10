@@ -1,12 +1,12 @@
 #include <Keypad.h>
 
-/* ===================== Pins (Arduino Mega 2560) ===================== */
+/* Pins (Arduino Mega 2560) */
 #define YELLOW   23
 #define GREEN    27
 #define RED      25
 #define BUZZER   12   // Active buzzer
 
-/* ===================== Keypad ===================== */
+/* Keypad */
 const byte ROWS = 4, COLS = 4;
 char hexaKeys[ROWS][COLS] = {
   {'1','2','3','A'},
@@ -18,7 +18,7 @@ byte rowPins[ROWS] = {9, 8, 7, 6};
 byte colPins[COLS] = {5, 4, 3, 2};
 Keypad keypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
-/* ===================== Traffic State ===================== */
+/* Traffic State */
 enum LedMode : uint8_t { OFF_MODE, RED_MODE, GREEN_MODE, YELLOW_MODE };
 volatile LedMode currentMode = OFF_MODE;
 
@@ -35,13 +35,13 @@ volatile uint16_t redSec    = 0;
 volatile uint16_t greenSec  = 0;
 volatile uint16_t yellowSec = 3;
 
-/* ===================== Input for duration setting ===================== */
+/* Input for duration setting */
 enum InputTarget : uint8_t { NONE, SET_RED, SET_GREEN, SET_YELLOW };
 InputTarget inputTarget = NONE;
 char digitsBuf[5];     // up to 4 digits + '\0'
 uint8_t digitsLen = 0;
 
-/* ===================== Helpers ===================== */
+/* Helpers */
 static inline void setRGB(bool r, bool g, bool y) {
   digitalWrite(RED,   r ? HIGH : LOW);
   digitalWrite(GREEN, g ? HIGH : LOW);
@@ -63,7 +63,7 @@ static inline void startMode(LedMode m, uint16_t seconds) {
   buzzerOn = false;
 }
 
-/* ===================== Timer1 ISR @ 1 Hz ===================== */
+/*  Timer1 ISR @ 1 Hz */
 ISR(TIMER1_COMPA_vect) {
   // Handle startup blink regardless of currentMode
   if (waitingForFirstKey) {
@@ -102,7 +102,7 @@ ISR(TIMER1_COMPA_vect) {
   }
 }
 
-/* ===================== Keypad Input Logic ===================== */
+/* Keypad Input Logic */
 void resetDigits() {
   digitsLen = 0;
   digitsBuf[0] = '\0';
@@ -133,7 +133,7 @@ void commitDigits() {
   resetDigits();
 }
 
-/* ===================== Setup ===================== */
+/* Setup */
 void setup() {
   pinMode(RED, OUTPUT);
   pinMode(GREEN, OUTPUT);
@@ -154,7 +154,7 @@ void setup() {
   sei();
 }
 
-/* ===================== Main Loop ===================== */
+/* Main Loop */
 void loop() {
   // --- Read keypad ---
   char k = keypad.getKey();
@@ -191,7 +191,7 @@ void loop() {
     }
   }
 
-  // --- Drive LEDs and buzzer based on current state ---
+  // Drive LEDs and buzzer based on current state
   bool waitingSnap, startupBlinkSnap;
   noInterrupts();
   waitingSnap = waitingForFirstKey;
@@ -217,7 +217,7 @@ void loop() {
 
   digitalWrite(BUZZER, buzzerSnap ? HIGH : LOW);
 
-  // ---- 0.5 s blink in last 3 seconds ----
+  // 0.5 s blink in last 3 seconds
   static unsigned long lastHalfBlink = 0;
   static bool halfBlinkState = false;
 

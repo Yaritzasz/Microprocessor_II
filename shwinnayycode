@@ -1,12 +1,12 @@
 #include <Keypad.h>
 
-/* ===================== Pins (Arduino Mega 2560) ===================== */
+/* Pins (Arduino Mega 2560) */
 #define YELLOW   23
 #define GREEN  27
 #define RED    25
 #define BUZZER 12   // Active buzzer
 
-/* ===================== Keypad ===================== */
+/* Keypad */
 const byte ROWS = 4, COLS = 4;
 char hexaKeys[ROWS][COLS] = {
   {'1','2','3','A'},
@@ -18,7 +18,7 @@ byte rowPins[ROWS] = {9, 8, 7, 6};
 byte colPins[COLS] = {5, 4, 3, 2};
 Keypad keypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
-/* ===================== Traffic State ===================== */
+/* Traffic State */
 enum LedMode : uint8_t { OFF_MODE, RED_MODE, GREEN_MODE, YELLOW_MODE };
 volatile LedMode currentMode = OFF_MODE;
 
@@ -36,20 +36,20 @@ volatile uint16_t redSec    = 0;
 volatile uint16_t greenSec  = 0;
 volatile uint16_t yellowSec = 4;
 
-/* ===================== Input for duration setting ===================== */
+/* Input for duration setting */
 enum InputTarget : uint8_t { NONE, SET_RED, SET_GREEN, SET_YELLOW };
 InputTarget inputTarget = NONE;
 char digitsBuf[5];     // up to 4 digits (0.9999) + '\0'
 uint8_t digitsLen = 0;
 
-/* ===================== Helpers ===================== */
+/* Helpers */
 static inline void setRGB(bool r, bool g, bool b) {
   digitalWrite(RED,   r ? HIGH : LOW);
   digitalWrite(GREEN, g ? HIGH : LOW);
   digitalWrite(YELLOW,  b ? HIGH : LOW);
 }
 
-// For "yellow", light RED+GREEN together
+// For when each LED turns on
 static inline void showModeSolid(LedMode m) {
   switch (m) {
     case RED_MODE:    setRGB(true,  false, false); break;
@@ -66,7 +66,7 @@ static inline void startMode(LedMode m, uint16_t seconds) {
   buzzerOn = false;
 }
 
-/* ===================== Timer1 ISR @ 1 Hz ===================== */
+/*  Timer1 ISR @ 1 Hz  */
 ISR(TIMER1_COMPA_vect) {
   // Handle startup blink regardless of currentMode
   if (waitingForFirstKey) {
@@ -108,7 +108,7 @@ ISR(TIMER1_COMPA_vect) {
   }
 }
 
-/* ===================== Keypad Input Logic ===================== */
+/* Keypad Input Logic */
 void resetDigits() {
   digitsLen = 0;
   digitsBuf[0] = '\0';
@@ -139,7 +139,7 @@ void commitDigits() {
   resetDigits();
 }
 
-/* ===================== Setup ===================== */
+/* Setup */
 void setup() {
   pinMode(RED, OUTPUT);
   pinMode(GREEN, OUTPUT);
@@ -148,7 +148,7 @@ void setup() {
   digitalWrite(BUZZER, LOW);
   setRGB(false, false, false);
 
-  // ---- Timer1 @ 1 Hz (CTC) ----
+  // Timer1 @ 1 Hz
   cli();                // stop interrupts
   TCCR1A = 0;
   TCCR1B = 0;
@@ -161,7 +161,7 @@ void setup() {
   sei();                // allow interrupts
 }
 
-/* ===================== Main Loop ===================== */
+/* Main Loop */
 void loop() {
   // --- Read keypad ---
   char k = keypad.getKey();
@@ -203,7 +203,7 @@ void loop() {
     }
   }
 
-  // --- Drive LEDs and buzzer based on current state ---
+  // Drive LEDs and buzzer based on current state
 
   // If still waiting for the first key, blink RED at 1 Hz
   bool waitingSnap, startupBlinkSnap;
@@ -234,7 +234,7 @@ void loop() {
   // Buzzer: ON in the last 3 seconds, else OFF
   digitalWrite(BUZZER, buzzerSnap ? HIGH : LOW);
 
-  // ---- modified blinking logic ----
+  // modified blinking logic for 1 sec -> 0.5 sec
   static unsigned long lastHalfBlink = 0;
   static bool halfBlinkState = false;
 

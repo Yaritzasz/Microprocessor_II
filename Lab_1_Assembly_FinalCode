@@ -1,26 +1,14 @@
-
-/* Imports */
-#include <stdio.h>
-#include <stdlib.h>
 #include <Keypad.h>
-#include <avr/interrupt.h>
 
-/* Pins assignments (using #define to get more RAM space) */
-#define  green_main 27     
-#define  yellow_main 25    
-#define  red_main 23        
-#define  buzzer_pin 12
+/* ===================== Pins (Arduino Mega 2560) ===================== */
+#define YELLOW   23
+#define GREEN  27
+#define RED    25
+#define BUZZER 12   // Active buzzer
 
-
-/* Init Vars */
- // timing and state transistion stuff
-volatile bool tick_flag = false;   
-int countdown_timer = 0;
-int state = 1;             
-// Keypad setup (from elegoo setup code) 
-const byte ROWS = 4; 
-const byte COLS = 4; 
-char keys[ROWS][COLS] = {
+/* ===================== Keypad ===================== */
+const byte ROWS = 4, COLS = 4;
+char hexaKeys[ROWS][COLS] = {
   {'1','2','3','A'},
   {'4','5','6','B'},
   {'7','8','9','C'},
@@ -28,221 +16,234 @@ char keys[ROWS][COLS] = {
 };
 byte rowPins[ROWS] = {9, 8, 7, 6};
 byte colPins[COLS] = {5, 4, 3, 2};
-Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+Keypad keypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 
+/* ===================== Traffic State ===================== */
+enum LedMode : uint8_t { OFF_MODE, RED_MODE, GREEN_MODE, YELLOW_MODE };
+volatile LedMode currentMode = OFF_MODE;
 
-// global vars for redlight and greenlight times
-int main_time_greenlight=10;
-int main_time_redlight=10;
-unsigned long start_time=0;
-unsigned long current_time=0;
+volatile bool trafficRun = false;           // true when running * cycle
+volatile uint16_t secondsRemaining = 0;     // counts down every 1s (ISR)
+volatile bool phaseBlinkOn = false;         // 1 Hz in last 3s (phase)
+volatile bool buzzerOn = false;             // ON in last 3s
 
-// Keypad user input
-String inputBuffer = "";
+// Startup blink (indefinite until first key)
+volatile bool waitingForFirstKey = true;
+volatile bool startupBlinkOn = false;       // toggled at 1 Hz by ISR
 
-/* Helper functions */
-// ISR to signal main loop that 1s passed
+// User-set durations (seconds). MUST be set via keypad (no hard-coded defaults)
+volatile uint16_t redSec    = 0;
+volatile uint16_t greenSec  = 0;
+volatile uint16_t yellowSec = 4;
+
+/* ===================== Input for duration setting ===================== */
+enum InputTarget : uint8_t { NONE, SET_RED, SET_GREEN, SET_YELLOW };
+InputTarget inputTarget = NONE;
+char digitsBuf[5];     // up to 4 digits (0.9999) + '\0'
+uint8_t digitsLen = 0;
+
+/* ===================== Helpers ===================== */
+static inline void setRGB(bool r, bool g, bool b) {
+  digitalWrite(RED,   r ? HIGH : LOW);
+  digitalWrite(GREEN, g ? HIGH : LOW);
+  digitalWrite(YELLOW,  b ? HIGH : LOW);
+}
+
+// For "yellow", light RED+GREEN together
+static inline void showModeSolid(LedMode m) {
+  switch (m) {
+    case RED_MODE:    setRGB(true,  false, false); break;
+    case GREEN_MODE:  setRGB(false, true,  false); break;
+    case YELLOW_MODE: setRGB(false,  false,  true); break; 
+    default:          setRGB(false, false, false); break;
+  }
+}
+
+static inline void startMode(LedMode m, uint16_t seconds) {
+  currentMode = m;
+  secondsRemaining = seconds;
+  phaseBlinkOn = false;
+  buzzerOn = false;
+}
+
+/* ===================== Timer1 ISR @ 1 Hz ===================== */
 ISR(TIMER1_COMPA_vect) {
-  tick_flag = true; 
-}
-
-/* needs to be checked... */
-void update_leds(int s) {
-  // Reset all lights first
-  digitalWrite(red_main, LOW);
-  digitalWrite(yellow_main, LOW);
-  digitalWrite(green_main, LOW);
-
-  // For blinking, we’ll use millis() to toggle every 500ms
-  static unsigned long lastBlink = 0;
-  static bool blinkOn = false;
-
-  if (millis() - lastBlink >= 500) {
-    blinkOn = !blinkOn;
-    lastBlink = millis();
+  // Handle startup blink regardless of currentMode
+  if (waitingForFirstKey) {
+    startupBlinkOn = !startupBlinkOn;  // toggle red each second
+    buzzerOn = false;
+    return;
   }
 
-  switch (s) {
-    case 1: // Main RED on, Cross GREEN on (steady)
-      digitalWrite(red_main, HIGH);
-      break;
+  if (currentMode == OFF_MODE) {
+    buzzerOn = false;
+    return;
+  }
 
-    case 2: // Main RED steady, Cross GREEN blinking
-      digitalWrite(red_main, HIGH);
-      if (blinkOn) digitalWrite(green_cross, HIGH);
-      break;
+  if (secondsRemaining > 0) {
+    secondsRemaining--;
 
-    case 3: // Main RED blinking, Cross YELLOW steady
-      if (blinkOn) digitalWrite(red_main, HIGH);
-      break;
+    // Last 3 seconds of current phase
+    if (secondsRemaining > 0 && secondsRemaining <= 3) {
+      buzzerOn = true;
+      phaseBlinkOn = !phaseBlinkOn;   // toggle at 1 Hz
+    } else {
+      buzzerOn = false;
+      phaseBlinkOn = false;
+    }
+  }
 
-    case 4: // Main GREEN steady, Cross RED steady
-      digitalWrite(green_main, HIGH);
-      break;
-
-    case 5: // Main GREEN blinking, Cross RED steady
-      if (blinkOn) digitalWrite(green_main, HIGH);
-      break;
-
-    case 6: // Main YELLOW steady, Cross RED blinking
-      digitalWrite(yellow_main, HIGH);
-      break;
+  // Phase end: chain or stop
+  if (secondsRemaining == 0) {
+    if (trafficRun) {
+      if      (currentMode == RED_MODE)    startMode(GREEN_MODE,  greenSec);
+      else if (currentMode == GREEN_MODE)  startMode(YELLOW_MODE, yellowSec);
+      else if (currentMode == YELLOW_MODE) startMode(RED_MODE,    redSec);
+      else                                 currentMode = OFF_MODE;
+    } else {
+      currentMode = OFF_MODE;
+      buzzerOn = false;
+      phaseBlinkOn = false;
+    }
   }
 }
 
-
-
-int test_func_leds(){ 
-  /*
-  Test function to use without assembly code, and without keypad to run LEDs. 
-  Take this code, paste to main, and write set_led_assembly. Also integrate with keypad and 7 segment display
-  ALSO NEED TO INTEGRATE BUZZER
-  */
-  /* 
-    Start loop by checking for user keypad input 
-    (is getting missed, user should be able to input at any point, while light sequence is still running)
-  */
-  char userKey = keypad.getKey();
-  if (userKey) {
-    if (userKey == '#') {     // Output command
-      Serial.print("Command received: ");
-      Serial.println(inputBuffer);
-      inputBuffer = "";
-    }
-    else {
-      inputBuffer += userKey; // Add keypresses to command
-    }
-  }
-
-  //main loop. will loop lights after times are confirmed
-  while(true){
-    /* STATE 1 RUNNING STATE, main redlight on, cross greenlight on */
-    digitalWrite(red_main, HIGH);     //turn on main redlight
-    //turn on cross greenlight
-    start_time=millis();              //get start time offset
-    //loop until 6 seconds left in main redlight time
-    while((main_time_redlight-((current_time-start_time))/1000)>6){ 
-      current_time=millis();
-    }
-      
-    /* STATE 2 RUNNING STATE, main redlight on, cross greenlight blinking */
-    for(int i=0;i<3;i++){             //blink the cross green light for 3 secs then turn it off. Main redlight stays ON. one loop is 1 sec 
-       //turn on light
-                          //wait 500ms (0.5s)
-       //turn off light
-                          //wait 500ms
-    }
-      
-    /* STATE 3 RUNNING STATE, main redlight blinking, cross yellowlight on */
-       //turn on cross yellow light
-    for(int i=0;i<3;i++){               //blink main redlight for 3 secs then turn off
-      digitalWrite(red_main,HIGH);      //turn on light
-      delay(500);                       //wait 500ms (0.5s)
-      digitalWrite(red_main,LOW);       //turn off light
-      delay(500);                       //wait 500ms
-    }
-        //turn off cross yellowlight
-        
-    /* STATE 4 RUNNING STATE, main greenlight on, cross redlight is on */
-    digitalWrite(green_main, HIGH);   //turn on main greenlight
-        //turn on cross redlight
-    start_time=millis();              //get start time offset
-    current_time=millis();
-    //loop until 3 seconds left in main greenlight time
-    while((main_time_greenlight-((current_time-start_time)/1000))>3){ 
-      current_time=millis();          //get current time
-    }
-        
-    /* STATE 5 RUNNING STATE, main greenlight blinking, cross redlight on */
-    for(int i=0;i<3;i++){             //blink main redlight for 3 secs then turn off
-      digitalWrite(green_main,HIGH);  //turn on light
-      delay(500);                     //wait 500ms (0.5s)
-      digitalWrite(green_main,LOW);   //turn off light
-      delay(500);                     //wait 500ms
-    }
-
-    /* STATE 6 RUNNING STATE, main yellowlight on, cross redlight blinking */
-    digitalWrite(yellow_main,HIGH);
-    for(int i=0;i<3;i++){             //blink main redlight for 3 secs then turn off
-        //turn on light
-      delay(500);                     //wait 500ms (0.5s)
-          //turn off light
-                           //wait 500ms
-    }
-    digitalWrite(yellow_main,LOW);    //turn off cross yellowlight
-
-    //LOOPS BACK TO STATE 1 RUNNING STATE...^
-  }
-
+/* ===================== Keypad Input Logic ===================== */
+void resetDigits() {
+  digitsLen = 0;
+  digitsBuf[0] = '\0';
 }
 
-/* Main runner functions */
+void pushDigit(char k) {
+  if (digitsLen < 4) {
+    digitsBuf[digitsLen++] = k;
+    digitsBuf[digitsLen] = '\0';
+  }
+}
+
+void commitDigits() {
+  if (digitsLen == 0) { inputTarget = NONE; return; }
+  uint16_t val = (uint16_t)atoi(digitsBuf);
+  if (val == 0) val = 1; // avoid zero-length phases; smallest allowed is 1s
+
+  noInterrupts();
+  switch (inputTarget) {
+    case SET_RED:    redSec    = val; break;
+    case SET_GREEN:  greenSec  = val; break;
+    case SET_YELLOW: yellowSec = val; break;
+    default: break;
+  }
+  interrupts();
+
+  inputTarget = NONE;
+  resetDigits();
+}
+
+/* ===================== Setup ===================== */
 void setup() {
-  // Pin and serial setup
-  Serial.begin(9600);
-  pinMode(green_main,OUTPUT);
-  pinMode(yellow_main,OUTPUT);
-  pinMode(red_main,OUTPUT);
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(YELLOW, OUTPUT);
+  pinMode(BUZZER, OUTPUT);
+  digitalWrite(BUZZER, LOW);
+  setRGB(false, false, false);
 
-  /*
-    Setup timer - CTC mode
-    1 sec at 16MHz/1024
-    Prescaler 1024
-    Enable Timer1 compare interrupt
-  */ 
+  // ---- Timer1 @ 1 Hz (CTC) ----
+  cli();                // stop interrupts
   TCCR1A = 0;
   TCCR1B = 0;
   TCNT1  = 0;
-  OCR1A = 15624;                       
-  TCCR1B |= (1 << WGM12);              
-  TCCR1B |= (1 << CS12) | (1 << CS10); 
-  TIMSK1 |= (1 << OCIE1A);              
-  sei();
-
-  // Initalize state machine
-  state = 1;
-  countdown_timer = main_time_redlight;
-
+  // (16 MHz) / (1024 prescaler) -> 15624 for 1 Hz (CTC)
+  OCR1A = 15624;
+  TCCR1B |= (1 << WGM12);                     // CTC mode
+  TCCR1B |= (1 << CS12) | (1 << CS10);        // prescaler 1024
+  TIMSK1 |= (1 << OCIE1A);                    // enable compare interrupt
+  sei();                // allow interrupts
 }
 
-void loop(){
-  Serial.begin(9600); 
-
-  // for testing: test_func_leds();
-  
-  /* Check and get keypad input at start of loop (change so that it changes the times it runs as well)*/ 
-  char userKey = keypad.getKey();
-  if (userKey) {
-    // Output command
-    if (userKey == '#') {   
-      Serial.print("Command received: ");
-      Serial.println(inputBuffer);
-      inputBuffer = "";
+/* ===================== Main Loop ===================== */
+void loop() {
+  // --- Read keypad ---
+  char k = keypad.getKey();
+  if (k) {
+    // stop startup blink on first keypress
+    noInterrupts();
+    if (waitingForFirstKey) {
+      waitingForFirstKey = false;
+      startupBlinkOn = false;
+      setRGB(false, false, false);
     }
-    // Add keypresses to command
-    else {                    
-      inputBuffer += userKey;
+    interrupts();
+
+    if (k == 'A') { inputTarget = SET_RED;    resetDigits(); }
+    else if (k == 'B') { inputTarget = SET_GREEN;  resetDigits(); }
+    else if (k >= '0' && k <= '9' && inputTarget != NONE) { pushDigit(k); }
+    else if (k == '#' && inputTarget != NONE) { commitDigits(); }
+    else if (k == '*') {
+      // start traffic cycle from RED using current durations
+      // Only start if ALL three durations are set (>0)
+      bool canStart;
+      noInterrupts();
+      canStart = (redSec > 0 && greenSec > 0);
+      if (canStart) {
+        trafficRun = true;
+        startMode(RED_MODE, redSec);
+      }
+      interrupts();
+      // If not set, do nothing (user must input durations first)
+    }
+    else if (k == 'D') {
+      // stop everything
+      noInterrupts();
+      trafficRun = false;
+      currentMode = OFF_MODE;
+      buzzerOn = false;
+      phaseBlinkOn = false;
+      interrupts();
     }
   }
 
-  /* Advance state machine only when ISR heartbeat says to */   
-  if (tick_flag) { // runs when "heart beats"
-    
-    // reset tick flag and decrement timer
-    tick_flag = false;
-    countdown_timer--;
+  // --- Drive LEDs and buzzer based on current state ---
+
+  // If still waiting for the first key, blink RED at 1 Hz
+  bool waitingSnap, startupBlinkSnap;
+  noInterrupts();
+  waitingSnap = waitingForFirstKey;
+  startupBlinkSnap = startupBlinkOn;
+  interrupts();
+
+  if (waitingSnap) {
+    if (startupBlinkSnap) setRGB(true, false, false);
+    else                  setRGB(false, false, false);
+    digitalWrite(BUZZER, LOW);
+    return;  // don't do anything else until first keypress
   }
 
-  /* Update outputs (led, buzzer and display) */
-  // update led based on state
-  update_leds(state);
+  // Otherwise: normal phase behavior
+  LedMode modeSnapshot;
+  bool phaseBlinkSnap, buzzerSnap;
+  uint16_t secsSnap;
 
-  // Buzzer beep at 3 mark
-  if (countdown_timer <= 3 && countdown_timer > 0) {
-    digitalWrite(buzzer_pin, HIGH);
+  noInterrupts();
+  modeSnapshot   = currentMode;
+  phaseBlinkSnap = phaseBlinkOn;
+  buzzerSnap     = buzzerOn;
+  secsSnap       = secondsRemaining;
+  interrupts();
+
+  // Buzzer: ON in the last 3 seconds, else OFF
+  digitalWrite(BUZZER, buzzerSnap ? HIGH : LOW);
+
+  if (modeSnapshot == OFF_MODE) {
+    setRGB(false, false, false);
   } else {
-    digitalWrite(buzzer_pin, LOW);
+    if (secsSnap > 0 && secsSnap <= 3) {
+      // 2 Hz blink (last 3 seconds)
+      if (phaseBlinkSnap) showModeSolid(modeSnapshot);
+      else                setRGB(false, false, false);
+    } else {
+      // steady
+      showModeSolid(modeSnapshot);
+    }
   }
-
 }
-

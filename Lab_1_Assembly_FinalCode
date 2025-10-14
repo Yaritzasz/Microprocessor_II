@@ -168,6 +168,8 @@ void loop() {
     }
     interrupts();
 
+// logic of stop light
+
     if (k == 'A') { inputTarget = SET_RED;    resetDigits(); }
     else if (k == 'B') { inputTarget = SET_GREEN;  resetDigits(); }
     else if (k >= '0' && k <= '9' && inputTarget != NONE) { pushDigit(k); }

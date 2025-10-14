@@ -191,13 +191,14 @@ void loop() {
     }
   }
 
-  // Drive LEDs and buzzer based on current state
+  // Drive LEDs and buzzer based on current state (setting flags and variables)
   bool waitingSnap, startupBlinkSnap;
   noInterrupts();
   waitingSnap = waitingForFirstKey;
   startupBlinkSnap = startupBlinkOn;
   interrupts();
 
+// on startup
   if (waitingSnap) {
     if (startupBlinkSnap) setRGB(true, false, false);
     else                  setRGB(false, false, false);
@@ -211,13 +212,13 @@ void loop() {
 
   noInterrupts();
   modeSnapshot = currentMode;
-  buzzerSnap   = buzzerOn;
+  buzzerSnap   = buzzerOn;                 // buzzer turns on during last 3 sec
   secsSnap     = secondsRemaining;
   interrupts();
 
   digitalWrite(BUZZER, buzzerSnap ? HIGH : LOW);
 
-  // 0.5 s blink in last 3 seconds
+  // turns off lights if no operation is running && 0.5 s blink in last 3 seconds
   static unsigned long lastHalfBlink = 0;
   static bool halfBlinkState = false;
 

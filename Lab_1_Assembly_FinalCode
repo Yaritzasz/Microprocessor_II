@@ -207,7 +207,7 @@ void loop() {
     digitalWrite(BUZZER, LOW);
     return;
   }
-
+// buzzer activation
   LedMode modeSnapshot;
   bool buzzerSnap;
   uint16_t secsSnap;

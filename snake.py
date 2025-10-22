@@ -14,7 +14,7 @@ import random
 import serial
 
 # Serial setup
-serialDevFile = '/dev/cu.usbmodem14201'  # change to match your system (e.g. COM3 on Windows)
+serialDevFile = '/dev/cu.usbmodem14201' # change to match your system (e.g. COM3 on Windows)
 ser = serial.Serial(serialDevFile, 9600, timeout=0)
 
 delay = 0.1

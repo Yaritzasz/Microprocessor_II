@@ -26,9 +26,9 @@ void loop() {
 
   // send direction to host (only when clearly tilted)
   if (X_val < 512 - deadZone)
-    Serial.write('a');   // left
+    Serial.write('d');   // left
   else if (X_val > 512 + deadZone)
-    Serial.write('d');   // right
+    Serial.write('a');   // right
   else if (Y_val < 512 - deadZone)
     Serial.write('s');   // down
   else if (Y_val > 512 + deadZone)

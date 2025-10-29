@@ -41,9 +41,9 @@ void loop() {
   // Positive X tilt → move right, Negative X tilt → move left
   // Positive Y tilt → move up, Negative Y tilt → move down
   if (GyX > threshold)
-    Serial.write('d');   // tilt right
+    Serial.write('a');   // tilt right
   else if (GyX < -threshold)
-    Serial.write('a');   // tilt left
+    Serial.write('d');   // tilt left
   else if (GyY > threshold)
     Serial.write('w');   // tilt up
   else if (GyY < -threshold)

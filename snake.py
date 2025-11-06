@@ -8,7 +8,7 @@ import random
 import serial
 
 # Serial port setup (update port as needed)
-serialDevFile = '/dev/cu.usbmodem143101'  # Change this for your system
+serialDevFile = '/dev/cu.usbmodem141101'  # Change this for your system
 ser = serial.Serial(serialDevFile, 9600, timeout=0)
 
 delay = 0.1

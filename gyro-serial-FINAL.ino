@@ -7,7 +7,7 @@ const int buzzer_pin = 12;
 int16_t GyX, GyY, GyZ;
 
 // Dead zone threshold to prevent noise
-const int threshold = 3000;
+const int threshold = 7000;
 
 void beep() {
   digitalWrite(buzzer_pin, HIGH);

@@ -14,6 +14,7 @@
 #include <Wire.h>
 #include <RTClib.h>
 #include <LiquidCrystal_I2C.h>
+#include <avr/interrupt.h>
 
 RTC_DS1307 rtc;
 LiquidCrystal_I2C lcd(0x27, 16, 2);  // use 0x3F if 0x27 doesn’t work
@@ -39,6 +40,24 @@ const unsigned long RUN_DURATION = 30000;  // 30 s
 bool motorRunning = false;
 unsigned long motorStartTime = 0;
 
+
+// --- Software clock driven by Timer1 ISR ---
+volatile uint8_t clockHour = 0;
+volatile uint8_t clockMin  = 0;
+volatile uint8_t clockSec  = 0;
+
+// 1 Hz tick flag so loop() knows when to refresh LCD, etc.
+volatile bool tick1s = false;
+
+// Motor timing: run 30 seconds each minute
+const uint8_t RUN_DURATION_SEC = 30;
+volatile uint8_t runSecondsLeft = 0;
+volatile bool motorStartFlag = false;
+volatile bool motorStopFlag  = false;
+
+volatile bool motorRunning = false;
+
+//Setup
 void setup() {
   Serial.begin(9600);
   Serial.println("Lab 3 – Step 5: RTC + Motor + LCD");
@@ -52,13 +71,22 @@ void setup() {
 
   Wire.begin();
   if (!rtc.begin()) {
-    Serial.println("❌ RTC not found!");
+    Serial.println(" RTC not found!");
     while (1);
   }
   if (!rtc.isrunning()) {
     Serial.println("RTC was stopped – starting clock now.");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
+
+// Get time FROM RTC ONLY ONCE
+  DateTime now = rtc.now();
+  clockHour = now.hour();
+  clockMin  = now.minute();
+  clockSec  = now.second();
+
+  // Start Timer1 @ 1 Hz
+  setupTimer1();
 
   lcd.init();
   lcd.backlight();
@@ -76,61 +104,80 @@ void loop() {
     lastDebounce = millis();
     if (reading == LOW) {
       dirCW = !dirCW;
-      Serial.print("🔄 Direction: ");
+      Serial.print(" Direction: ");
       Serial.println(dirCW ? "CW" : "CCW");
       if (motorRunning) applyDirection();
     }
   }
   lastButtonState = reading;
 
-  // RTC time
-  DateTime now = rtc.now();
-  char buf[9];
-  sprintf(buf, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-
-  // Top of minute → run motor for 30 s
-  if (now.second() == 0 && !motorRunning) {
-    Serial.println("🕒 New minute → Motor ON 30 s");
+ // --- Handle motor start/stop flags set by ISR ---
+  if (motorStartFlag) {
+    motorStartFlag = false;
+    motorRunning   = true;
     startMotor();
-    motorRunning = true;
-    motorStartTime = millis();
+    Serial.println(" New minute → Motor ON 30 s");
   }
 
-  // Stop after 30 s
-  if (motorRunning && (millis() - motorStartTime >= RUN_DURATION)) {
-    stopMotor();
-    motorRunning = false;
-    Serial.println("⏹️ Motor OFF");
+ if (motorStopFlag) {
+    motorStopFlag = false;
+    if (motorRunning) {
+      stopMotor();
+      motorRunning = false;
+      Serial.println(" Motor OFF");
+    }
   }
 
-  // LCD display update (1 Hz)
-  lcd.setCursor(0, 0);
-  lcd.print(buf);
-  lcd.print("    "); // clear trailing chars
 
-  lcd.setCursor(0, 1);
-  lcd.print("Dir:");
-  lcd.print(dirCW ? "C " : "CC");
-  lcd.print(" Spd:");
-  switch (speedStep) {
-    case SPD_FULL: lcd.print("Full"); break;
-    case SPD_3Q:  lcd.print("3/4 "); break;
-    case SPD_HALF: lcd.print("1/2 "); break;
-    default:     lcd.print("0   "); break;
+   // --- Once per second update display ---
+  if (tick1s) {
+    tick1s = false;
+
+    // Safely copy clock time from ISR variables
+    uint8_t hh, mm, ss;
+    noInterrupts();
+    hh = clockHour;
+    mm = clockMin;
+    ss = clockSec;
+    interrupts();
+
+    char buf[9];
+    sprintf(buf, "%02d:%02d:%02d", hh, mm, ss);
+
+    // Update LCD
+    lcd.setCursor(0, 0);
+    lcd.print(buf);
+    lcd.print("    "); // clear trailing chars
+
+    lcd.setCursor(0, 1);
+    lcd.print("Dir:");
+    lcd.print(dirCW ? "C " : "CC");
+    lcd.print(" Spd:");
+    switch (speedStep) {
+      case SPD_FULL: lcd.print("Full"); break;
+      case SPD_3Q:   lcd.print("3/4 "); break;
+      case SPD_HALF: lcd.print("1/2 "); break;
+      default:       lcd.print("0   "); break;
+    }
   }
-  delay(1000);
+
+  // No delay() here – main loop runs freely
 }
 
-// --- Motor helpers ---
+// -----------------------------------------------------------------------------
+// Motor helpers
+// -----------------------------------------------------------------------------
 void startMotor() {
   applyDirection();
   int pwm = (speedStep == SPD_FULL) ? 255 :
-    (speedStep == SPD_3Q) ? 192 :
-    (speedStep == SPD_HALF) ? 128 : 0;
+            (speedStep == SPD_3Q)   ? 192 :
+            (speedStep == SPD_HALF) ? 128 : 0;
   analogWrite(ENA, pwm);
 }
 
-void stopMotor() { analogWrite(ENA, 0); }
+void stopMotor() {
+  analogWrite(ENA, 0);
+}
 
 void applyDirection() {
   if (dirCW) {
@@ -140,4 +187,51 @@ void applyDirection() {
     digitalWrite(IN1, LOW);
     digitalWrite(IN2, HIGH);
   }
+}
+
+// -----------------------------------------------------------------------------
+// Timer1 ISR + setup (1 Hz)
+// -----------------------------------------------------------------------------
+ISR(TIMER1_COMPA_vect) {
+  // 1) Software clock update
+  clockSec++;
+  if (clockSec >= 60) {
+    clockSec = 0;
+    clockMin++;
+    if (clockMin >= 60) {
+      clockMin = 0;
+      clockHour++;
+      if (clockHour >= 24) {
+        clockHour = 0;
+      }
+    }
+  }
+
+  // 2) Motor timing: 30 s at top of each minute
+  if (clockSec == 0) {
+    // beginning of a new minute: start 30-second run
+    runSecondsLeft = RUN_DURATION_SEC;
+    motorStartFlag = true;
+  } else if (runSecondsLeft > 0) {
+    runSecondsLeft--;
+    if (runSecondsLeft == 0) {
+      motorStopFlag = true;
+    }
+  }
+
+  // 3) Tell loop() to refresh LCD & info
+  tick1s = true;
+}
+
+/* ---- Timer1 @ 1 Hz (CTC) setup ---- */
+void setupTimer1() {
+  cli();
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1  = 0;
+  OCR1A = 15624;                           // 1 Hz compare (16MHz / 1024 - 1)
+  TCCR1B |= (1 << WGM12);                  // CTC mode
+  TCCR1B |= (1 << CS12) | (1 << CS10);     // prescaler 1024
+  TIMSK1 |= (1 << OCIE1A);                 // enable compare interrupt
+  sei();
 }

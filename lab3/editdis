@@ -164,9 +164,7 @@ void loop() {
   // No delay() here – main loop runs freely
 }
 
-// -----------------------------------------------------------------------------
 // Motor helpers
-// -----------------------------------------------------------------------------
 void startMotor() {
   applyDirection();
   int pwm = (speedStep == SPD_FULL) ? 255 :

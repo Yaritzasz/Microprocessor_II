@@ -1,0 +1,143 @@
+/*
+  Lab 3 – Step 5: DS1307 RTC + DC Motor + Direction Button + LCD Display
+  ---------------------------------------------------------------------
+  Hardware mapping:
+    D5 → L293D pin 1 (Enable PWM)
+    D4 → L293D pin 2 (IN1)
+    D3 → L293D pin 7 (IN2)
+    D2 → Pushbutton → GND (INPUT_PULLUP)
+    A4 → SDA (I²C data)
+    A5 → SCL (I²C clock)
+    VCC → 5 V, GND → common ground (Arduino + RTC + motor supply)
+*/
+
+#include <Wire.h>
+#include <RTClib.h>
+#include <LiquidCrystal_I2C.h>
+
+RTC_DS1307 rtc;
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // use 0x3F if 0x27 doesn’t work
+
+// Motor pins
+const int ENA = 5;
+const int IN1 = 4;
+const int IN2 = 3;
+
+// Button
+const int BTN_DIR = 2;
+bool dirCW = true;
+bool lastButtonState = HIGH;
+unsigned long lastDebounce = 0;
+const unsigned long debounceDelay = 200;
+
+// Speed levels
+enum SpeedStep { SPD_0 = 0, SPD_HALF = 1, SPD_3Q = 2, SPD_FULL = 3 };
+SpeedStep speedStep = SPD_3Q;
+
+// Timing
+const unsigned long RUN_DURATION = 30000;  // 30 s
+bool motorRunning = false;
+unsigned long motorStartTime = 0;
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Lab 3 – Step 5: RTC + Motor + LCD");
+
+  pinMode(ENA, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(BTN_DIR, INPUT_PULLUP);
+
+  analogWrite(ENA, 0);
+
+  Wire.begin();
+  if (!rtc.begin()) {
+    Serial.println("❌ RTC not found!");
+    while (1);
+  }
+  if (!rtc.isrunning()) {
+    Serial.println("RTC was stopped – starting clock now.");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("RTC + Motor LCD");
+  delay(1000);
+  lcd.clear();
+}
+
+void loop() {
+  // Button handling (toggle direction)
+  bool reading = digitalRead(BTN_DIR);
+  if (reading != lastButtonState && (millis() - lastDebounce) > debounceDelay) {
+    lastDebounce = millis();
+    if (reading == LOW) {
+      dirCW = !dirCW;
+      Serial.print("🔄 Direction: ");
+      Serial.println(dirCW ? "CW" : "CCW");
+      if (motorRunning) applyDirection();
+    }
+  }
+  lastButtonState = reading;
+
+  // RTC time
+  DateTime now = rtc.now();
+  char buf[9];
+  sprintf(buf, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+
+  // Top of minute → run motor for 30 s
+  if (now.second() == 0 && !motorRunning) {
+    Serial.println("🕒 New minute → Motor ON 30 s");
+    startMotor();
+    motorRunning = true;
+    motorStartTime = millis();
+  }
+
+  // Stop after 30 s
+  if (motorRunning && (millis() - motorStartTime >= RUN_DURATION)) {
+    stopMotor();
+    motorRunning = false;
+    Serial.println("⏹️ Motor OFF");
+  }
+
+  // LCD display update (1 Hz)
+  lcd.setCursor(0, 0);
+  lcd.print(buf);
+  lcd.print("    "); // clear trailing chars
+
+  lcd.setCursor(0, 1);
+  lcd.print("Dir:");
+  lcd.print(dirCW ? "C " : "CC");
+  lcd.print(" Spd:");
+  switch (speedStep) {
+    case SPD_FULL: lcd.print("Full"); break;
+    case SPD_3Q:  lcd.print("3/4 "); break;
+    case SPD_HALF: lcd.print("1/2 "); break;
+    default:     lcd.print("0   "); break;
+  }
+  delay(1000);
+}
+
+// --- Motor helpers ---
+void startMotor() {
+  applyDirection();
+  int pwm = (speedStep == SPD_FULL) ? 255 :
+    (speedStep == SPD_3Q) ? 192 :
+    (speedStep == SPD_HALF) ? 128 : 0;
+  analogWrite(ENA, pwm);
+}
+
+void stopMotor() { analogWrite(ENA, 0); }
+
+void applyDirection() {
+  if (dirCW) {
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+  } else {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+  }
+}

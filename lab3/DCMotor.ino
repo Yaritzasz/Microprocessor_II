@@ -65,7 +65,7 @@ void loop() {
 
   // Detect minute boundary → run motor for 30 s
   if (now.second() == 0 && !motorRunning) {
-    Serial.println("🕒 New minute detected → Motor ON for 30 s");
+    Serial.println("New minute detected → Motor ON for 30 s");
     startMotor();
     motorRunning = true;
     motorStartTime = millis();

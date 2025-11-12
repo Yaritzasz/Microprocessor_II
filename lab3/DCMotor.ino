@@ -1,13 +1,14 @@
 /*
-  Lab 3 – Step 3: DS1307 RTC + DC Motor Integration
-  ----------------------------------------------
-  Hardware mapping (confirmed from photo and lab):
+  Lab 3 – Step 4: DS1307 RTC + DC Motor + Direction Button
+  --------------------------------------------------------
+  Hardware mapping:
     D5 → L293D pin 1 (Enable 1,2 – PWM)
-    D4 → L293D pin 2 (Input 1)
-    D3 → L293D pin 7 (Input 2)
-    A4 → SDA (I²C data)
-    A5 → SCL (I²C clock)
-    VCC → 5 V, GND → common ground (Arduino + motor supply)
+    D4 → L293D pin 2 (IN1)
+    D3 → L293D pin 7 (IN2)
+    D2 → Pushbutton (to GND, use INPUT_PULLUP)
+    A4 → SDA  (I²C data)
+    A5 → SCL  (I²C clock)
+    VCC → 5 V, GND → common ground (Arduino + motor supply + RTC)
 */
 
 #include <Wire.h>
@@ -16,114 +17,103 @@
 RTC_DS1307 rtc;
 
 // --- Motor pins ---
-const int ENA = 5;   // PWM enable (L293D pin 1)
-const int IN1 = 4;   // Direction 1 (L293D pin 2)
-const int IN2 = 3;   // Direction 2 (L293D pin 7)
-int pwmSpeed = 200;  // Speed (0–255)
+const int ENA = 5;
+const int IN1 = 4;
+const int IN2 = 3;
 
 // --- Button ---
-const int buttonPin = 6;
-bool directionCW = true;      // true = clockwise, false = counter-clockwise
-bool lastButtonState = HIGH;  // previous reading
+const int BTN_DIR = 2;  // button to GND
+bool dirCW = true;      // true = clockwise
+bool lastButtonState = HIGH;
 unsigned long lastDebounce = 0;
-const unsigned long debounceDelay = 50;
+const unsigned long debounceDelay = 200;
 
-// --- Timing for motor ---
-const unsigned long RUN_DURATION = 30000;  // 30 seconds
+// --- Speed & timing ---
+int pwmSpeed = 200;
+const unsigned long RUN_DURATION = 30000;  // 30 s
 bool motorRunning = false;
 unsigned long motorStartTime = 0;
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("Lab 3 – Step 3: DS1307 RTC + Motor Control + Button");
+  Serial.println("Lab 3 – Step 4: RTC + Motor + Direction Button");
 
-  // Motor setup
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
-  analogWrite(ENA, 0);  // motor off
+  analogWrite(ENA, 0);
 
+  pinMode(BTN_DIR, INPUT_PULLUP);  // internal pull-up
 
-  // Button setup
-  pinMode(buttonPin, INPUT_PULLUP);  // use internal pull-up resistor
-
-  // RTC setup
   Wire.begin();
   if (!rtc.begin()) {
-    Serial.println("RTC not found!");
+    Serial.println("❌ RTC not found!");
     while (1);
   }
-
-// Uncomment only once to set the RTC to your computer time, then comment back out
-  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
   if (!rtc.isrunning()) {
     Serial.println("RTC was stopped – starting clock now.");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
+
+  Serial.println("✅ RTC ready\n");
 }
 
 void loop() {
-
-  // -------- BUTTON CHECK --------
-  int reading = digitalRead(buttonPin);
-
-  if (reading != lastButtonState) {
+  // --- Button handling (toggle direction) ---
+  bool reading = digitalRead(BTN_DIR);
+  if (reading != lastButtonState && (millis() - lastDebounce) > debounceDelay) {
     lastDebounce = millis();
-  }
-
-
-  if ((millis() - lastDebounce) > debounceDelay) {
-    if (reading == LOW && lastButtonState == HIGH) {
-      directionCW = !directionCW;   // toggle direction
-      Serial.print("Direction changed → ");
-      Serial.println(directionCW ? "CW" : "CCW");
-      setMotorDirection();
+    if (reading == LOW) {
+      dirCW = !dirCW;
+      Serial.print("🔄 Direction changed to ");
+      Serial.println(dirCW ? "CW (clockwise)" : "CCW (counter-clockwise)");
+      if (motorRunning) applyDirection();  // immediately update direction if spinning
     }
   }
   lastButtonState = reading;
 
-
-  // Display current time
+  // --- RTC time update ---
+  DateTime now = rtc.now();
   char buf[9];
   sprintf(buf, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
   Serial.print("Time: ");
   Serial.println(buf);
 
-  // Detect minute boundary → run motor for 30 s
+  // --- Start motor every minute ---
   if (now.second() == 0 && !motorRunning) {
-    Serial.println("New minute detected → Motor ON for 30 s");
+    Serial.println("🕒 New minute → Motor ON for 30 s");
     startMotor();
     motorRunning = true;
     motorStartTime = millis();
   }
 
-  // Stop after 30 seconds
+  // --- Stop after 30 s ---
   if (motorRunning && (millis() - motorStartTime >= RUN_DURATION)) {
     stopMotor();
     motorRunning = false;
-    Serial.println("Motor OFF");
+    Serial.println("⏹️ Motor OFF\n");
   }
 
   delay(200);
 }
 
 // --- Helper functions ---
-void setMotorDirection() {
-  if (directionCW) {
+void startMotor() {
+  applyDirection();
+  analogWrite(ENA, pwmSpeed);
+}
+
+void stopMotor() {
+  analogWrite(ENA, 0);
+}
+
+void applyDirection() {
+  if (dirCW) {
     digitalWrite(IN1, HIGH);
     digitalWrite(IN2, LOW);
   } else {
     digitalWrite(IN1, LOW);
     digitalWrite(IN2, HIGH);
   }
-}
-
-void startMotor() {
-  setMotorDirection();
-  analogWrite(ENA, pwmSpeed);
-}
-
-void stopMotor() {
-  analogWrite(ENA, 0);
 }

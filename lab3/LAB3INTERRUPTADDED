@@ -1,0 +1,158 @@
+/*
+  Lab 3 – Step 6: DS1307 RTC + DC Motor + Direction Button + LCD (Parallel Wiring)
+  -------------------------------------------------------------------------
+  Adds a 1 Hz timer interrupt (Timer1) to refresh display (clock, direction, RPM).
+  Hardware mapping same as Step 5.
+*/
+
+#include <Wire.h>
+#include <RTClib.h>
+#include <LiquidCrystal.h>
+#include <avr/interrupt.h>
+
+RTC_DS1307 rtc;
+LiquidCrystal lcd(7, 8, 9, 10, 11, 12);   // RS, EN, D4, D5, D6, D7
+
+// --- Motor pins ---
+const int ENA = 5;
+const int IN1 = 4;
+const int IN2 = 3;
+
+// --- Button ---
+const int BTN_DIR = 2;  // button to GND
+bool dirCW = true;
+bool lastButtonState = HIGH;
+unsigned long lastDebounce = 0;
+const unsigned long debounceDelay = 200;
+
+// --- Speed & timing ---
+int pwmSpeed = 200;
+const unsigned long RUN_DURATION = 30000;  // 30 s
+bool motorRunning = false;
+unsigned long motorStartTime = 0;
+
+// --- Timer / display update ---
+volatile bool updateDisplay = false;  // flag set by ISR
+int rpm = 0;  // placeholder for real RPM calculation
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Lab 3");
+
+  // Motor setup
+  pinMode(ENA, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  analogWrite(ENA, 0);
+
+  // Button
+  pinMode(BTN_DIR, INPUT_PULLUP);
+
+  // RTC
+  Wire.begin();
+  if (!rtc.begin()) {
+    Serial.println("RTC not found!");
+    while (1);
+  }
+  if (!rtc.isrunning()) {
+    Serial.println("RTC was stopped – starting clock now.");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  // LCD
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.print("Lab 3");
+  delay(1000);
+  lcd.clear();
+
+  // --- Timer1 setup for 1 Hz interrupt ---
+  cli(); // disable global interrupts
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1  = 0;
+  OCR1A = 15624;                     // 1 Hz at 16 MHz / 1024 prescaler
+  TCCR1B |= (1 << WGM12);            // CTC mode
+  TCCR1B |= (1 << CS12) | (1 << CS10); // Prescaler 1024
+  TIMSK1 |= (1 << OCIE1A);           // Enable Timer1 compare interrupt
+  sei(); // enable global interrupts
+}
+
+void loop() {
+  // --- Button handling (toggle direction) ---
+  bool reading = digitalRead(BTN_DIR);
+  if (reading != lastButtonState && (millis() - lastDebounce) > debounceDelay) {
+    lastDebounce = millis();
+    if (reading == LOW) {
+      dirCW = !dirCW;
+      Serial.print("Direction changed to ");
+      Serial.println(dirCW ? "CW" : "CCW");
+      if (motorRunning) applyDirection();
+    }
+  }
+  lastButtonState = reading;
+
+  // --- RTC control for motor every minute ---
+  DateTime now = rtc.now();
+  if (now.second() == 0 && !motorRunning) {
+    Serial.println("New minute -> Motor ON for 30 s");
+    startMotor();
+    motorRunning = true;
+    motorStartTime = millis();
+  }
+
+  if (motorRunning && (millis() - motorStartTime >= RUN_DURATION)) {
+    stopMotor();
+    motorRunning = false;
+    Serial.println("Motor OFF");
+  }
+
+  // --- LCD update when ISR flag is set ---
+  if (updateDisplay) {
+    updateDisplay = false;
+    updateLCD();
+  }
+}
+
+// --- ISR: fires once per second ---
+ISR(TIMER1_COMPA_vect) {
+  updateDisplay = true;
+}
+
+// --- Helper functions ---
+void startMotor() {
+  applyDirection();
+  analogWrite(ENA, pwmSpeed);
+}
+
+void stopMotor() {
+  analogWrite(ENA, 0);
+}
+
+void applyDirection() {
+  if (dirCW) {
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+  } else {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+  }
+}
+
+void updateLCD() {
+  DateTime now = rtc.now();
+
+  char buf[9];
+  sprintf(buf, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+
+  lcd.setCursor(0, 0);
+  lcd.print(buf);
+  lcd.print("   ");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Dir:");
+  lcd.print(dirCW ? "CW " : "CCW");
+  lcd.print(" Spd:");
+  lcd.print(pwmSpeed);
+  lcd.print(" ");
+}

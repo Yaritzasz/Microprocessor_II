@@ -113,7 +113,7 @@ void loop() {
 
   lcd.setCursor(0, 1);
   lcd.print("Dir:");
-  lcd.print(dirCW ? "C " : "CC");
+  lcd.print(dirCW ? "CW " : "CCW");
   lcd.print(" Spd:");
   lcd.print(pwmSpeed);
 

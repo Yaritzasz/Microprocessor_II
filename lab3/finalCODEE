@@ -92,13 +92,13 @@ void loop() {
   // --- Sound-sensor to speed mapping ---
   soundValue = analogRead(soundPin);
 
-  if (soundValue < 95) {
+  if (soundValue < 40) {
     pwmSpeed = 0;
     speedLabel = "0";
-  } else if (soundValue < 98) {
+  } else if (soundValue < 120) {
     pwmSpeed = 128;
     speedLabel = "1/2";
-  } else if (soundValue < 110) {
+  } else if (soundValue < 200) {
     pwmSpeed = 192;
     speedLabel = "3/4";
   } else {

@@ -1,7 +1,7 @@
     .data
     .align 2
 
-/* array[10] = 10 words = 40 bytes */
+/* array[10] = 40 bytes */
 array:
     .word 0,0,0,0,0,0,0,0,0,0
 
@@ -9,66 +9,92 @@ array:
     .text
     .globl main
 
-/* main: for(i=0;i<10;i++) array[i]=fibonacci(i); */
-main:
-    la      s0, array              /* s0 = base addr of array */
-    li      t0, 0                  /* i = 0 */
-    li      t1, 10                 /* bound = 10 */
-    addi    x0, x0, 0              /* NOP */
-
-main_for_test:
-    bge     t0, t1, main_done      /* if i>=10 break */
-
-main_for_body:
-    mv      a0, t0                 /* arg n = i */
-    jal     ra, fibonacci          /* a0 = fib(i) */
-
-    slli    t2, t0, 2              /* offset = i*4 */
-    add     t3, s0, t2             /* &array[i] */
-    sw      a0, 0(t3)              /* array[i] = a0 */
-
-main_for_step:
-    addi    t0, t0, 1              /* i++ */
-    j       main_for_test
-
-main_done:
-    ebreak                         /* stop in Ripes */
+/* Entry point */
+_start:
+    j main
 
 
-/* int fibonacci(int n)
-   in:  a0=n
-   out: a0=fib(n)
-*/
+/* ------------------------------------------------------------
+   fibonacci(n)
+   input : x10 = n
+   output: x10 = fib(n)
+
+   register use:
+     x10 = n / return value
+     x5  = n copy
+     x6  = 1 constant
+     x7  = first
+     x28 = second
+     x29 = i
+     x30 = result
+     x2  = sp
+     x1  = ra
+------------------------------------------------------------ */
 fibonacci:
-    addi    sp, sp, -16
-    sw      ra, 12(sp)
+    addi x2, x2, -16
+    sw   x1, 12(x2)
 
-    mv      t0, a0                 /* t0 = n */
-    li      t1, 1
-    ble     t0, t1, fib_ret_n      /* if n<=1 return n */
+    addi x5,  x10, 0        /* x5 = n */
+    addi x6,  x0,  1        /* x6 = 1 */
 
-    li      t2, 0                  /* first  = 0 */
-    li      t3, 1                  /* second = 1 */
-    li      t4, 2                  /* i = 2 */
+    bge  x6,  x5,  FibRetN  /* if 1 >= n => n <= 1 return n */
 
-fib_for_test:
-    bgt     t4, t0, fib_done       /* if i>n break */
+    addi x7,  x0,  0        /* first  = 0 */
+    addi x28, x0,  1        /* second = 1 */
+    addi x29, x0,  2        /* i = 2 */
 
-fib_for_body:
-    add     t5, t2, t3             /* result = first+second */
-    mv      t2, t3                 /* first = second */
-    mv      t3, t5                 /* second = result */
-    addi    t4, t4, 1              /* i++ */
-    j       fib_for_test
+FibTest:
+    blt  x5,  x29, FibDone  /* if n < i => i > n stop */
 
-fib_done:
-    mv      a0, t5                 /* return result */
-    lw      ra, 12(sp)
-    addi    sp, sp, 16
-    ret
+    add  x30, x7,  x28      /* result = first + second */
+    addi x7,  x28, 0        /* first = second */
+    addi x28, x30, 0        /* second = result */
+    addi x29, x29, 1        /* i++ */
+    j    FibTest
 
-fib_ret_n:
-    mv      a0, t0                 /* return n */
-    lw      ra, 12(sp)
-    addi    sp, sp, 16
-    ret
+FibDone:
+    addi x10, x30, 0        /* return result */
+    lw   x1,  12(x2)
+    addi x2,  x2,  16
+    jalr x0,  0(x1)
+
+FibRetN:
+    addi x10, x5,  0        /* return n */
+    lw   x1,  12(x2)
+    addi x2,  x2,  16
+    jalr x0,  0(x1)
+
+
+/* ------------------------------------------------------------
+   main:
+   for (i=0; i<10; i++) array[i] = fibonacci(i);
+
+   register use:
+     x8  = base address of array
+     x5  = i
+     x6  = bound (10)
+     x7  = offset (i*4)
+     x28 = address (&array[i])
+     x10 = argument/return (a0)
+------------------------------------------------------------ */
+main:
+    la   x8, array          /* x8 = &array[0] */
+
+    addi x5, x0, 0          /* i = 0 */
+    addi x6, x0, 10         /* bound = 10 */
+
+MainTest:
+    bge  x5, x6, MainDone   /* if i>=10 exit */
+
+    addi x10, x5, 0         /* x10 = i (argument) */
+    jal  x1, fibonacci      /* call fibonacci(i), result in x10 */
+
+    slli x7,  x5, 2         /* offset = i*4 */
+    add  x28, x8, x7        /* &array[i] */
+    sw   x10, 0(x28)        /* array[i] = fib(i) */
+
+    addi x5, x5, 1          /* i++ */
+    j    MainTest
+
+MainDone:
+    ebreak                  /* stop in Ripes */

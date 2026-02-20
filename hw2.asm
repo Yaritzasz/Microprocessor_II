@@ -1,100 +1,55 @@
-    .data
-    .align 2
+.data
+array: .word 0,0,0,0,0,0,0,0,0,0
 
-/* array[10] = 40 bytes */
-array:
-    .word 0,0,0,0,0,0,0,0,0,0
+.text
+.globl main
 
-
-    .text
-    .globl main
-
-/* Entry point */
-_start:
-    j main
-
-
-/* ------------------------------------------------------------
-   fibonacci(n)
-   input : x10 = n
-   output: x10 = fib(n)
-
-   register use:
-     x10 = n / return value
-     x5  = n copy
-     x6  = 1 constant
-     x7  = first
-     x28 = second
-     x29 = i
-     x30 = result
-     x2  = sp
-     x1  = ra
------------------------------------------------------------- */
-fibonacci:
-    addi x2, x2, -16
-    sw   x1, 12(x2)
-
-    addi x5,  x10, 0        /* x5 = n */
-    addi x6,  x0,  1        /* x6 = 1 */
-
-    bge  x6,  x5,  FibRetN  /* if 1 >= n => n <= 1 return n */
-
-    addi x7,  x0,  0        /* first  = 0 */
-    addi x28, x0,  1        /* second = 1 */
-    addi x29, x0,  2        /* i = 2 */
-
-FibTest:
-    blt  x5,  x29, FibDone  /* if n < i => i > n stop */
-
-    add  x30, x7,  x28      /* result = first + second */
-    addi x7,  x28, 0        /* first = second */
-    addi x28, x30, 0        /* second = result */
-    addi x29, x29, 1        /* i++ */
-    j    FibTest
-
-FibDone:
-    addi x10, x30, 0        /* return result */
-    lw   x1,  12(x2)
-    addi x2,  x2,  16
-    jalr x0,  0(x1)
-
-FibRetN:
-    addi x10, x5,  0        /* return n */
-    lw   x1,  12(x2)
-    addi x2,  x2,  16
-    jalr x0,  0(x1)
-
-
-/* ------------------------------------------------------------
-   main:
-   for (i=0; i<10; i++) array[i] = fibonacci(i);
-
-   register use:
-     x8  = base address of array
-     x5  = i
-     x6  = bound (10)
-     x7  = offset (i*4)
-     x28 = address (&array[i])
-     x10 = argument/return (a0)
------------------------------------------------------------- */
 main:
-    la   x8, array          /* x8 = &array[0] */
+    li x8, 0          # initialize loop counter i = 0
+    la x9, array      # base address of array
 
-    addi x5, x0, 0          /* i = 0 */
-    addi x6, x0, 10         /* bound = 10 */
+loop:
+    li x5, 10         # loop limit = 10
+    bge x8, x5, done  # stop when i reaches 10
 
-MainTest:
-    bge  x5, x6, MainDone   /* if i>=10 exit */
+    mv x10, x8        # i into argument register
+    jal fibonacci     # call fibonacci(i)
 
-    addi x10, x5, 0         /* x10 = i (argument) */
-    jal  x1, fibonacci      /* call fibonacci(i), result in x10 */
+    slli x6, x8, 2    
+    add  x7, x9, x6   # compute address of array[i]
+    sw   x10, 0(x7)   # store fibonacci result 
 
-    slli x7,  x5, 2         /* offset = i*4 */
-    add  x28, x8, x7        /* &array[i] */
-    sw   x10, 0(x28)        /* array[i] = fib(i) */
+    addi x8, x8, 1    # increment i
+    j loop            # repeat loop
 
-    addi x5, x5, 1          /* i++ */
-    j    MainTest
+done:
+    j done            # infinite loop to end program
 
-MainDone:
-    ebreak                  /* stop in Ripes */
+fibonacci:
+    addi x2, x2, -4   # make space on stack
+    sw   x1, 0(x2)    # return address
+
+    li x5, 1          # check base case valueis 1
+    ble x10, x5, base # if n <= 1 return n
+
+    li x6, 0          # first number = 0
+    li x7, 1          # second number = 1
+    li x28, 2         # start counter at 2
+
+fib_loop:
+    bgt x28, x10, fib_end  # stop when counter > n
+
+    add x29, x6, x7   # compute next fibonacci number
+    mv  x6, x7        # shift second into first
+    mv  x7, x29       # update second with new value
+
+    addi x28, x28, 1  # increment loop counter
+    j fib_loop
+
+fib_end:
+    mv x10, x7        # move result into return register
+
+base:
+    lw   x1, 0(x2)    # restore return address
+    addi x2, x2, 4    # restore stack pointer
+    ret               # return to caller
